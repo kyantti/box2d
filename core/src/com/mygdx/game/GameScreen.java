@@ -32,7 +32,7 @@ public class GameScreen implements Screen {
         Vector2 gravity = new Vector2(0, -9.8f);
         world = new World(gravity, true);
         debugRenderer = new Box2DDebugRenderer();
-        
+
         camera = new OrthographicCamera();
         camera.setToOrtho(false, Gdx.graphics.getWidth() / 100f, Gdx.graphics.getHeight() / 100f);
 
@@ -59,12 +59,12 @@ public class GameScreen implements Screen {
     }
 
     private void createRamp(Body groundBody, float xOffset) {
-        float slopeAngle = 30f;
+        float slopeAngle = 45f;
         float slopeLength = 1.5f;
         float slopeHeight = (float) (slopeLength * Math.tan(Math.toRadians(slopeAngle)));
-    
+
         Vector2[] vertices = new Vector2[3];
-        
+
         // Left ramp (negative xOffset)
         if (xOffset < 0) {
             vertices[0] = new Vector2(xOffset, 0.1f);
@@ -77,36 +77,35 @@ public class GameScreen implements Screen {
             vertices[1] = new Vector2(xOffset - slopeLength, 0.1f);
             vertices[2] = new Vector2(xOffset, 0.1f + slopeHeight);
         }
-    
+
         PolygonShape slopeShape = new PolygonShape();
         slopeShape.set(vertices);
         groundBody.createFixture(slopeShape, 0);
-    
+
         slopeShape.dispose();
     }
-    
+
     private void createBox() {
         BodyDef boxBodyDef = new BodyDef();
         boxBodyDef.type = BodyType.DynamicBody;
-        boxBodyDef.position.set(new Vector2(3, 3));  // Set the initial position of the box
+        boxBodyDef.position.set(new Vector2(1, 3)); // Set the initial position of the box
         boxBody = world.createBody(boxBodyDef);
 
         PolygonShape boxShape = new PolygonShape();
-        boxShape.setAsBox(0.1f, 0.1f);  // Create a box shape
+        boxShape.setAsBox(0.1f, 0.1f); // Create a box shape
         FixtureDef fixtureDef = new FixtureDef();
         fixtureDef.shape = boxShape;
         boxBody.createFixture(fixtureDef);
-
         boxShape.dispose();
     }
 
     @Override
     public void render(float delta) {
-        
+
         Gdx.gl.glClear(GL20.GL_COLOR_BUFFER_BIT);
 
         // Step the physics simulation
-        world.step(1/60f, 6, 2);
+        world.step(1 / 60f, 6, 2);
 
         // Update camera
         camera.update();
@@ -119,29 +118,47 @@ public class GameScreen implements Screen {
     }
 
     private void handleInput() {
-        Vector2 normal = getGroundNormal();
-        Vector2 director = new Vector2(-normal.y, normal.x);
-
-        if (isBoxOnSlope() && !Gdx.input.isKeyPressed(Input.Keys.LEFT) && !Gdx.input.isKeyPressed(Input.Keys.RIGHT)) {
-            Vector2 frictionForce = new Vector2(new Vector2(0.125f, -9.8f)).scl(-60f);
-            boxBody.applyForceToCenter(frictionForce, true);
-        }
+        Vector2 velocity = boxBody.getLinearVelocity();
+        Vector2 desiredVelocity = new Vector2(0, velocity.y);
+        Vector2 velocityChange = new Vector2();
+        Vector2 impulse = new Vector2();
+        Vector2 weight = new Vector2(0, 0);
+        Vector2 normal = getGroundNormal("left");
         
-        // Apply forces in the direction of the director vector with the adjusted magnitude
+        weight.x = boxBody.getMass() * world.getGravity().y * normal.x;
+        weight.y = boxBody.getMass() * world.getGravity().y * normal.y;
+  
         if (Gdx.input.isKeyPressed(Input.Keys.LEFT)) {
-            Vector2 force = new Vector2(director).scl(0.2f);
-            boxBody.applyLinearImpulse(force, boxBody.getWorldCenter(), true);
+            desiredVelocity.x = -1f;
         }
         else if (Gdx.input.isKeyPressed(Input.Keys.RIGHT)) {
-            boxBody.applyLinearImpulse(new Vector2(0.125f, 0), boxBody.getWorldCenter(), true);
+            desiredVelocity.x = 1f;
         }
-        else{
-            boxBody.setLinearVelocity(boxBody.getWorld().getGravity());   
+        else if (!Gdx.input.isKeyPressed(Input.Keys.LEFT) && !Gdx.input.isKeyPressed(Input.Keys.RIGHT)) {
+            desiredVelocity.x = weight.x;
+            desiredVelocity.y = weight.y;
         }
+        if (Gdx.input.isKeyJustPressed(Input.Keys.SPACE)) {
+            desiredVelocity.x = 0;
+            desiredVelocity.y = 5f;
+        }
+
+        //boxBody.setTransform(boxBody.getPosition(), (float) Math.toRadians(-getGroundAngle(getGroundNormal("left")) ));
+        velocityChange = desiredVelocity.sub(velocity);
+        impulse = velocityChange.scl(boxBody.getMass());
+        boxBody.applyLinearImpulse(impulse, boxBody.getWorldCenter(), true);
+        Gdx.app.log("Velocity", velocity.toString());     
+
+        
     }
 
-    private boolean isBoxOnSlope() {
-        Vector2 normal = getGroundNormal();
+    private double getGroundAngle(Vector2 normal) {
+        double angleRad = Math.atan2(normal.x, normal.y);
+        return angleRad * MathUtils.radiansToDegrees;
+    }
+
+    private boolean isBoxOnSlope(String direction) {
+        Vector2 normal = getGroundNormal(direction);
 
         // Define a threshold angle to determine if the surface is a slope
         float slopeThreshold = 0.1f;
@@ -153,21 +170,26 @@ public class GameScreen implements Screen {
         return angle > slopeThreshold;
     }
 
-    private Vector2 getGroundNormal() {
+    private Vector2 getGroundNormal(String direction) {
         // Half-width of the box
         float halfWidth = 0.1f;
-    
+
         // Get the position of the box
         Vector2 boxCenter = boxBody.getPosition();
-        
-        // Calculate the position of the left bottom vertex of the box
-        Vector2 leftBottomVertex = new Vector2(boxCenter).sub(halfWidth, halfWidth);
-        
+        Vector2 bottomVertex = new Vector2();
+
+        // Calculate the bottom vertex of the box based on the direction
+        if (direction.equals("left")) {
+            bottomVertex = new Vector2(boxCenter).sub(halfWidth, halfWidth);
+        } else if (direction.equals("right")) {
+            bottomVertex = new Vector2(boxCenter).add(halfWidth, -halfWidth);
+        }
+
         // Variable to store the normal of the left side
-        final Vector2 leftNormal = new Vector2(); 
-        
-        Vector2 endPosition = new Vector2(boxCenter).mulAdd(leftBottomVertex.cpy().sub(boxCenter), 2.0f);
-    
+        final Vector2 leftNormal = new Vector2();
+
+        Vector2 endPosition = new Vector2(boxCenter).mulAdd(bottomVertex.cpy().sub(boxCenter), 2.0f);
+
         // Create a callback that sets the normal when a ray hits the ground
         RayCastCallback leftCallback = new RayCastCallback() {
             @Override
@@ -176,17 +198,16 @@ public class GameScreen implements Screen {
                 return 0;
             }
         };
-        
+
         // Perform a raycast from boxCenter to the extended end position
         world.rayCast(leftCallback, boxCenter, endPosition);
-        
+
         drawRay(boxCenter, endPosition);
-        
+
         return leftNormal;
     }
-    
 
-    private void drawRay(Vector2 starPoint, Vector2 endPoint){
+    private void drawRay(Vector2 starPoint, Vector2 endPoint) {
         shapeRenderer.setProjectionMatrix(camera.combined);
         shapeRenderer.begin(ShapeRenderer.ShapeType.Line);
         shapeRenderer.setColor(Color.RED);
@@ -194,25 +215,24 @@ public class GameScreen implements Screen {
         shapeRenderer.end();
     }
 
-
     @Override
     public void resize(int width, int height) {
-        
+
     }
 
     @Override
     public void pause() {
-        
+
     }
 
     @Override
     public void resume() {
-      
+
     }
 
     @Override
     public void hide() {
-       
+
     }
 
     @Override
